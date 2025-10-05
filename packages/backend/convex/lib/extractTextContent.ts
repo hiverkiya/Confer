@@ -4,7 +4,7 @@ import type { StorageActionWriter } from "convex/server";
 import { assert } from "convex-helpers";
 import { Id } from "../_generated/dataModel";
 const AI_MODELS = {
-  image: openai.chat("gpt-4o-mini"),
+  image: openai.chat("gpt-4o"),
   pdf: openai.chat("gpt-4o"),
   html: openai.chat("gpt-4o"),
 } as const;
@@ -39,6 +39,71 @@ export async function extractTextContent(
   if (mimeType.toLowerCase().includes("pdf")) {
     return extractPdfText(url, mimeType, filename);
   }
+  if (mimeType.toLowerCase().includes("text")) {
+    return extractTextFileContent(ctx, storageId, bytes, mimeType);
+  }
+}
+async function extractTextFileContent(
+  ctx: { storage: StorageActionWriter },
+  storageId: Id<"_storage">,
+  bytes: ArrayBuffer | undefined,
+  mimeType: string,
+): Promise<string> {
+  const arrayBuffer =
+    bytes || (await (await ctx.storage.get(storageId))?.arrayBuffer());
+  if (!arrayBuffer) {
+    throw new Error("Failed to get file content");
+  }
+  const text = new TextDecoder().decode(arrayBuffer);
+  if (mimeType.toLowerCase() !== "text/plain") {
+    const result = await generateText({
+      model: AI_MODELS.html,
+      system: SYSTEM_PROMPTS.html,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text },
+            {
+              type: "text",
+              text: "Extract the text and print it in a markdown format without explaining that you'll do so. ",
+            },
+          ],
+        },
+      ],
+    });
+    return result.text;
+  }
+  return text;
+}
+
+async function extractPdfText(
+  url: string,
+  mimeType: string,
+  filename: string,
+): Promise<string> {
+  const result = await generateText({
+    model: AI_MODELS.pdf,
+    system: SYSTEM_PROMPTS.pdf,
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "file",
+            data: new URL(url),
+            mimeType,
+            filename,
+          },
+          {
+            type: "text",
+            text: "Extract the text from the PDF and print it without explaining you'll do so.",
+          },
+        ],
+      },
+    ],
+  });
+  return result.text;
 }
 async function extractImageText(url: string): Promise<string> {
   const result = await generateText({
